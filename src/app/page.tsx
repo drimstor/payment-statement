@@ -1,65 +1,144 @@
-import Image from "next/image";
+import { kv } from "@vercel/kv";
+import Link from "next/link";
 import styles from "./page.module.css";
 
-export default function Home() {
+type TransactionType = "interest" | "payment";
+
+type Transaction = {
+  id: string;
+  type: TransactionType;
+  amount: number;
+  date: string;
+  balanceAfter: number;
+};
+
+type LoanState = {
+  totalDebt: number;
+};
+
+type Data = {
+  state: LoanState;
+  transactions: Transaction[];
+};
+
+async function getData(): Promise<Data> {
+  const stateKey = "loan:state";
+  const transactionsKey = "loan:transactions";
+  let state = await kv.get<LoanState>(stateKey);
+
+  if (!state) {
+    const initialDebtEnv = process.env.INITIAL_LOAN_DEBT;
+    const initialDebt = initialDebtEnv ? Number(initialDebtEnv) : 0;
+    state = { totalDebt: initialDebt };
+    await kv.set(stateKey, state);
+  }
+
+  const rawTransactions = await kv.lrange<string>(transactionsKey, 0, -1);
+  const transactions = rawTransactions
+    .map((item) => {
+      try {
+        return JSON.parse(item) as Transaction;
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((item): item is Transaction => Boolean(item));
+
+  return {
+    state,
+    transactions,
+  };
+}
+
+function formatCurrency(value: number) {
+  return value.toLocaleString("ru-RU", {
+    style: "currency",
+    currency: "RUB",
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return date.toLocaleDateString("ru-RU", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+export default async function Home() {
+  const { state, transactions } = await getData();
+
   return (
     <div className={styles.page}>
       <main className={styles.main}>
-        <Image
-          className={styles.logo}
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className={styles.intro}>
-          <h1>To get started, edit the page.tsx file.</h1>
-          <p>
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Learning
-            </a>{" "}
-            center.
+        <header className={styles.header}>
+          <div>
+            <h1 className={styles.title}>Кредит</h1>
+            <p className={styles.subtitle}>История платежей и процентов</p>
+          </div>
+          <Link href="/pay" className={styles.payButton}>
+            Внести платёж
+          </Link>
+        </header>
+
+        <section className={styles.summary}>
+          <p className={styles.summaryLabel}>Общий долг</p>
+          <p className={styles.summaryValue}>
+            {formatCurrency(state.totalDebt)}
           </p>
-        </div>
-        <div className={styles.ctas}>
-          <a
-            className={styles.primary}
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className={styles.logo}
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className={styles.secondary}
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+        </section>
+
+        <section className={styles.transactions}>
+          <h2 className={styles.transactionsTitle}>Транзакции</h2>
+          {transactions.length === 0 ? (
+            <p className={styles.empty}>Пока нет ни одной транзакции.</p>
+          ) : (
+            <ul className={styles.transactionsList}>
+              {transactions.map((transaction) => (
+                <li key={transaction.id} className={styles.transactionItem}>
+                  <div
+                    className={
+                      transaction.type === "interest"
+                        ? styles.iconInterest
+                        : styles.iconPayment
+                    }
+                  >
+                    {transaction.type === "interest" ? "%" : "₽"}
+                  </div>
+                  <div className={styles.transactionMain}>
+                    <div className={styles.transactionRow}>
+                      <span className={styles.transactionTitle}>
+                        {transaction.type === "interest"
+                          ? "Проценты по кредиту"
+                          : "Платёж по кредиту"}
+                      </span>
+                      <span
+                        className={
+                          transaction.type === "interest"
+                            ? styles.amountNegative
+                            : styles.amountPositive
+                        }
+                      >
+                        {transaction.type === "interest" ? "+" : "−"}
+                        {formatCurrency(transaction.amount)}
+                      </span>
+                    </div>
+                    <div className={styles.transactionRow}>
+                      <span className={styles.transactionDate}>
+                        {formatDate(transaction.date)}
+                      </span>
+                      <span className={styles.transactionBalance}>
+                        Остаток: {formatCurrency(transaction.balanceAfter)}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );
