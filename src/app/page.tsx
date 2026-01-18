@@ -93,7 +93,7 @@ export default async function Home() {
             <h1 className={styles.title}>Кредит</h1>
             <p className={styles.subtitle}>История платежей и процентов</p>
           </div>
-          <Link href="/pay" className={styles.payButton}>
+          <Link href="/pay" prefetch={false} className={styles.payButton}>
             Внести платёж
           </Link>
         </header>
