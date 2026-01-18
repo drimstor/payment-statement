@@ -80,12 +80,12 @@ export async function GET(request: NextRequest) {
   const now = new Date();
   const day = now.getDate();
 
-  if (day !== 28) {
-    return NextResponse.json({
-      applied: false,
-      reason: "Not the 28th day of month",
-    });
-  }
+  // if (day !== 28) {
+  //   return NextResponse.json({
+  //     applied: false,
+  //     reason: "Not the 28th day of month",
+  //   });
+  // }
 
   const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
     2,
