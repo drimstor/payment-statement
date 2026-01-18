@@ -2,6 +2,8 @@ import { getDb } from "@/lib/mongodb";
 import Link from "next/link";
 import styles from "./page.module.css";
 
+export const dynamic = "force-dynamic";
+
 type TransactionType = "interest" | "payment";
 
 type Transaction = {
