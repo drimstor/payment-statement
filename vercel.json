@@ -2,8 +2,7 @@
   "crons": [
     {
       "path": "/api/cron/apply-interest",
-      "schedule": "0 10 28 * *"
+      "schedule": "*/5 * * * *"
     }
   ]
 }
-
