@@ -62,9 +62,17 @@ export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
 
   if (secret) {
+    const authHeader = request.headers.get("authorization");
+    const bearerToken =
+      authHeader && authHeader.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length)
+        : null;
+
     const header = request.headers.get("x-cron-secret");
 
-    if (!header || header !== secret) {
+    const valid = bearerToken === secret || header === secret;
+
+    if (!valid) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
