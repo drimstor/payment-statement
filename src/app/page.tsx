@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { getDb } from "@/lib/mongodb";
 import Link from "next/link";
 import styles from "./page.module.css";
 
@@ -22,32 +22,45 @@ type Data = {
 };
 
 async function getData(): Promise<Data> {
-  const stateKey = "loan:state";
-  const transactionsKey = "loan:transactions";
-  let state = await kv.get<LoanState>(stateKey);
+  const db = await getDb();
 
-  if (!state) {
+  const stateCollection = db.collection<LoanState & { _id: string }>(
+    "loanState",
+  );
+  const transactionsCollection = db.collection<Transaction & { _id: string }>(
+    "transactions",
+  );
+
+  let stateDoc = await stateCollection.findOne({ _id: "state" });
+
+  if (!stateDoc) {
     const initialDebtEnv = process.env.INITIAL_LOAN_DEBT;
     const initialDebt = initialDebtEnv ? Number(initialDebtEnv) : 0;
-    state = { totalDebt: initialDebt };
-    await kv.set(stateKey, state);
+    stateDoc = {
+      _id: "state",
+      totalDebt: initialDebt,
+    };
+    await stateCollection.insertOne(stateDoc);
   }
 
-  const rawTransactions = await kv.lrange<string>(transactionsKey, 0, -1);
-  const transactions = rawTransactions
-    .map((item) => {
-      try {
-        return JSON.parse(item) as Transaction;
-      } catch {
-        return undefined;
-      }
-    })
-    .filter((item): item is Transaction => Boolean(item));
+  const transactionsDocs = await transactionsCollection
+    .find({})
+    .sort({ date: -1 })
+    .toArray();
 
-  return {
-    state,
-    transactions,
+  const transactions: Transaction[] = transactionsDocs.map((doc) => ({
+    id: doc.id,
+    type: doc.type,
+    amount: doc.amount,
+    date: doc.date,
+    balanceAfter: doc.balanceAfter,
+  }));
+
+  const state: LoanState = {
+    totalDebt: stateDoc.totalDebt,
   };
+
+  return { state, transactions };
 }
 
 function formatCurrency(value: number) {

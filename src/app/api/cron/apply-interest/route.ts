@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { getDb } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 type TransactionType = "interest" | "payment";
@@ -16,24 +16,46 @@ type LoanState = {
   lastInterestMonth?: string;
 };
 
-const stateKey = "loan:state";
-const transactionsKey = "loan:transactions";
+type LoanStateDoc = LoanState & { _id: string };
+type TransactionDoc = Transaction & { _id: string };
 
-async function getLoanState(): Promise<LoanState> {
-  let state = await kv.get<LoanState>(stateKey);
+async function getLoanStateAndDb() {
+  const db = await getDb();
+  const collection = db.collection<LoanStateDoc>("loanState");
 
-  if (!state) {
+  let stateDoc = await collection.findOne({ _id: "state" });
+
+  if (!stateDoc) {
     const initialDebtEnv = process.env.INITIAL_LOAN_DEBT;
     const initialDebt = initialDebtEnv ? Number(initialDebtEnv) : 0;
-    state = { totalDebt: initialDebt };
-    await kv.set(stateKey, state);
+
+    stateDoc = {
+      _id: "state",
+      totalDebt: initialDebt,
+    };
+
+    await collection.insertOne(stateDoc);
   }
 
-  return state;
+  return { db, stateDoc };
 }
 
-async function saveLoanState(state: LoanState) {
-  await kv.set(stateKey, state);
+async function saveLoanState(
+  db: Awaited<ReturnType<typeof getDb>>,
+  state: LoanState,
+) {
+  const collection = db.collection<LoanStateDoc>("loanState");
+
+  await collection.updateOne(
+    { _id: "state" },
+    {
+      $set: {
+        totalDebt: state.totalDebt,
+        lastInterestMonth: state.lastInterestMonth,
+      },
+    },
+    { upsert: true },
+  );
 }
 
 export async function GET(request: NextRequest) {
@@ -57,26 +79,26 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const monthKey = `${now.getFullYear()}-${String(
-    now.getMonth() + 1
-  ).padStart(2, "0")}`;
+  const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(
+    2,
+    "0",
+  )}`;
 
-  const state = await getLoanState();
+  const { db, stateDoc } = await getLoanStateAndDb();
 
-  if (state.lastInterestMonth === monthKey) {
+  if (stateDoc.lastInterestMonth === monthKey) {
     return NextResponse.json({
       applied: false,
       reason: "Interest already applied for this month",
     });
   }
 
-  const interestRaw = state.totalDebt * 0.05;
+  const interestRaw = stateDoc.totalDebt * 0.05;
   const interest = Math.round(interestRaw * 100) / 100;
 
-  const newTotalDebt = state.totalDebt + interest;
+  const newTotalDebt = stateDoc.totalDebt + interest;
 
   const updatedState: LoanState = {
-    ...state,
     totalDebt: newTotalDebt,
     lastInterestMonth: monthKey,
   };
@@ -89,9 +111,14 @@ export async function GET(request: NextRequest) {
     balanceAfter: newTotalDebt,
   };
 
+  const transactionsCollection = db.collection<TransactionDoc>("transactions");
+
   await Promise.all([
-    saveLoanState(updatedState),
-    kv.lpush(transactionsKey, JSON.stringify(transaction)),
+    saveLoanState(db, updatedState),
+    transactionsCollection.insertOne({
+      _id: transaction.id,
+      ...transaction,
+    }),
   ]);
 
   return NextResponse.json({
@@ -100,4 +127,3 @@ export async function GET(request: NextRequest) {
     transaction,
   });
 }
-

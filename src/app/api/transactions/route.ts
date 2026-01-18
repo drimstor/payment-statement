@@ -1,4 +1,4 @@
-import { kv } from "@vercel/kv";
+import { getDb } from "@/lib/mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 type TransactionType = "interest" | "payment";
@@ -16,31 +16,53 @@ type LoanState = {
   lastInterestMonth?: string;
 };
 
-const stateKey = "loan:state";
-const transactionsKey = "loan:transactions";
+type LoanStateDoc = LoanState & { _id: string };
+type TransactionDoc = Transaction & { _id: string };
 
-async function getLoanState(): Promise<LoanState> {
-  let state = await kv.get<LoanState>(stateKey);
+async function getLoanState() {
+  const db = await getDb();
+  const collection = db.collection<LoanStateDoc>("loanState");
+
+  let state = await collection.findOne({ _id: "state" });
 
   if (!state) {
     const initialDebtEnv = process.env.INITIAL_LOAN_DEBT;
     const initialDebt = initialDebtEnv ? Number(initialDebtEnv) : 0;
-    state = { totalDebt: initialDebt };
-    await kv.set(stateKey, state);
+
+    state = {
+      _id: "state",
+      totalDebt: initialDebt,
+    };
+
+    await collection.insertOne(state);
   }
 
-  return state;
+  return { db, state };
 }
 
-async function saveLoanState(state: LoanState) {
-  await kv.set(stateKey, state);
+async function saveLoanState(
+  db: Awaited<ReturnType<typeof getDb>>,
+  state: LoanState,
+) {
+  const collection = db.collection<LoanStateDoc>("loanState");
+
+  await collection.updateOne(
+    { _id: "state" },
+    {
+      $set: {
+        totalDebt: state.totalDebt,
+        lastInterestMonth: state.lastInterestMonth,
+      },
+    },
+    { upsert: true },
+  );
 }
 
 async function addTransaction(
   type: TransactionType,
   amount: number,
 ): Promise<{ state: LoanState; transaction: Transaction }> {
-  const state = await getLoanState();
+  const { db, state } = await getLoanState();
 
   const normalizedAmount = Number(amount);
 
@@ -76,27 +98,56 @@ async function addTransaction(
     balanceAfter: newTotalDebt,
   };
 
+  const transactionsCollection = db.collection<TransactionDoc>("transactions");
+
   await Promise.all([
-    saveLoanState(updatedState),
-    kv.lpush(transactionsKey, JSON.stringify(transaction)),
+    saveLoanState(db, updatedState),
+    transactionsCollection.insertOne({
+      _id: id,
+      ...transaction,
+    }),
   ]);
 
   return { state: updatedState, transaction };
 }
 
 export async function GET() {
-  const state = await getLoanState();
+  const db = await getDb();
 
-  const rawTransactions = await kv.lrange<string>(transactionsKey, 0, -1);
-  const transactions = rawTransactions
-    .map((item) => {
-      try {
-        return JSON.parse(item) as Transaction;
-      } catch {
-        return undefined;
-      }
-    })
-    .filter((item): item is Transaction => Boolean(item));
+  const stateCollection = db.collection<LoanStateDoc>("loanState");
+  const transactionsCollection = db.collection<TransactionDoc>("transactions");
+
+  let stateDoc = await stateCollection.findOne({ _id: "state" });
+
+  if (!stateDoc) {
+    const initialDebtEnv = process.env.INITIAL_LOAN_DEBT;
+    const initialDebt = initialDebtEnv ? Number(initialDebtEnv) : 0;
+
+    stateDoc = {
+      _id: "state",
+      totalDebt: initialDebt,
+    };
+
+    await stateCollection.insertOne(stateDoc);
+  }
+
+  const transactionsDocs = await transactionsCollection
+    .find({})
+    .sort({ date: -1 })
+    .toArray();
+
+  const transactions: Transaction[] = transactionsDocs.map((doc) => ({
+    id: doc.id,
+    type: doc.type,
+    amount: doc.amount,
+    date: doc.date,
+    balanceAfter: doc.balanceAfter,
+  }));
+
+  const state: LoanState = {
+    totalDebt: stateDoc.totalDebt,
+    lastInterestMonth: stateDoc.lastInterestMonth,
+  };
 
   return NextResponse.json({
     state,
