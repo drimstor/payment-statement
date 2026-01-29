@@ -101,7 +101,7 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const interestRaw = stateDoc.totalDebt * 0.05;
+  const interestRaw = stateDoc.totalDebt * 0.03;
   const interest = Math.round(interestRaw * 100) / 100;
 
   const newTotalDebt = stateDoc.totalDebt + interest;
